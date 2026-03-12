@@ -1,0 +1,9 @@
+flask==3.0.0
+flask-socketio==5.3.6
+flask-cors==4.0.0
+requests==2.31.0
+ollama==0.1.8
+gitpython==3.1.40
+schedule==1.2.1
+python-dotenv==1.0.0
+eventlet==0.35.2

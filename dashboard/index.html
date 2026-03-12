@@ -1,0 +1,1245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Zion</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+  <style>
+    /* ── Reset & Base ───────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:         #0a0a0f;
+      --bg2:        #111118;
+      --bg3:        #18181f;
+      --border:     #2a2a3a;
+      --accent:     #7c6af7;
+      --accent2:    #5eead4;
+      --warn:       #f59e0b;
+      --error:      #ef4444;
+      --success:    #22c55e;
+      --text:       #e2e8f0;
+      --text2:      #94a3b8;
+      --text3:      #475569;
+      --working:    #818cf8;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', system-ui, sans-serif;
+      font-size: 13px;
+      height: 100vh;
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: 44px 1fr 52px;
+      grid-template-columns: 1fr;
+    }
+
+    /* ── Project Bar (top) ──────────────────────────── */
+    #project-bar {
+      background: var(--bg2);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      gap: 4px;
+      overflow-x: auto;
+    }
+
+    #project-bar .logo {
+      font-weight: 700;
+      font-size: 15px;
+      color: var(--accent);
+      margin-right: 16px;
+      letter-spacing: 2px;
+      flex-shrink: 0;
+    }
+
+    .project-tab {
+      padding: 4px 14px;
+      border-radius: 6px;
+      border: 1px solid transparent;
+      cursor: pointer;
+      white-space: nowrap;
+      font-size: 12px;
+      color: var(--text2);
+      transition: all 0.15s;
+      flex-shrink: 0;
+    }
+    .project-tab:hover { background: var(--bg3); color: var(--text); }
+    .project-tab.active {
+      background: var(--accent);
+      color: white;
+      border-color: var(--accent);
+      font-weight: 600;
+    }
+    .project-tab .dot {
+      display: inline-block;
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      margin-right: 5px;
+      background: var(--text3);
+    }
+    .project-tab.active .dot { background: white; }
+    .project-tab.has-alert .dot { background: var(--warn); }
+
+    #btn-new-project {
+      padding: 4px 12px;
+      border-radius: 6px;
+      border: 1px dashed var(--border);
+      cursor: pointer;
+      color: var(--text3);
+      background: transparent;
+      font-size: 12px;
+      flex-shrink: 0;
+    }
+    #btn-new-project:hover { border-color: var(--accent); color: var(--accent); }
+
+    .spacer { flex: 1; }
+
+    #daemon-indicator {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--text3);
+      flex-shrink: 0;
+    }
+    #daemon-indicator .dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--text3);
+    }
+    #daemon-indicator.running .dot { background: var(--success); }
+
+    /* ── Main Area ──────────────────────────────────── */
+    #main {
+      display: grid;
+      grid-template-columns: 240px 1fr 260px;
+      gap: 0;
+      overflow: hidden;
+    }
+
+    /* ── Agent Panel (left) ─────────────────────────── */
+    #agent-panel {
+      background: var(--bg2);
+      border-right: 1px solid var(--border);
+      overflow-y: auto;
+      padding: 12px 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    #agent-panel h3 {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--text3);
+      padding: 0 6px 6px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 4px;
+    }
+
+    .agent-card {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      transition: border-color 0.2s;
+    }
+    .agent-card.working { border-color: var(--working); }
+    .agent-card.error { border-color: var(--error); }
+    .agent-card.waiting { border-color: var(--warn); }
+
+    .agent-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .agent-icon {
+      width: 28px; height: 28px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+    .agent-icon.manager  { background: #312e81; }
+    .agent-icon.worker   { background: #14532d; }
+    .agent-icon.reviewer { background: #7c2d12; }
+    .agent-icon.logger   { background: #1e3a5f; }
+    .agent-icon.watcher  { background: #3b0764; }
+
+    .agent-name { font-weight: 600; font-size: 12px; }
+    .agent-role { font-size: 10px; color: var(--text3); }
+
+    .agent-status-badge {
+      font-size: 10px;
+      padding: 2px 7px;
+      border-radius: 20px;
+      font-weight: 600;
+      margin-left: auto;
+    }
+    .status-idle    { background: #1f2937; color: var(--text3); }
+    .status-working { background: #1e1b4b; color: var(--working); }
+    .status-waiting { background: #451a03; color: var(--warn); }
+    .status-error   { background: #450a0a; color: var(--error); }
+
+    .agent-rows { display: flex; flex-direction: column; gap: 3px; }
+    .agent-row  {
+      font-size: 10px;
+      color: var(--text3);
+      display: grid;
+      grid-template-columns: 60px 1fr;
+      gap: 4px;
+    }
+    .agent-row .label { color: var(--text3); font-weight: 600; }
+    .agent-row .value { color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .agent-row .value.active { color: var(--text); }
+
+    /* Connection lines area */
+    #connections {
+      height: 60px;
+      margin: 4px 0;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #connections svg { width: 100%; height: 100%; }
+
+    /* ── Centre: Manager Chat ───────────────────────── */
+    #chat-area {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    #chat-header {
+      padding: 10px 16px;
+      background: var(--bg2);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    #chat-header h2 { font-size: 13px; font-weight: 600; }
+    #chat-header .subtitle { font-size: 11px; color: var(--text3); }
+    #briefing-badge {
+      display: none;
+      background: var(--warn);
+      color: black;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 20px;
+      cursor: pointer;
+      margin-left: auto;
+    }
+    #briefing-badge.visible { display: block; }
+
+    #chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .msg {
+      max-width: 88%;
+      padding: 10px 14px;
+      border-radius: 12px;
+      line-height: 1.5;
+      font-size: 12.5px;
+    }
+    .msg.harley {
+      background: var(--accent);
+      color: white;
+      align-self: flex-end;
+      border-bottom-right-radius: 3px;
+    }
+    .msg.manager {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      align-self: flex-start;
+      border-bottom-left-radius: 3px;
+    }
+    .msg.system {
+      background: transparent;
+      border: 1px dashed var(--border);
+      color: var(--text3);
+      align-self: center;
+      font-size: 11px;
+      text-align: center;
+      padding: 6px 12px;
+    }
+    .msg.briefing {
+      background: #1a1a0a;
+      border: 1px solid var(--warn);
+      align-self: stretch;
+      white-space: pre-wrap;
+      font-size: 11.5px;
+      max-width: 100%;
+    }
+
+    .msg-meta {
+      font-size: 10px;
+      color: var(--text3);
+      margin-top: 4px;
+    }
+
+    /* Feedback buttons */
+    .feedback-row {
+      display: flex;
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .btn-feedback {
+      padding: 3px 10px;
+      border-radius: 5px;
+      border: 1px solid var(--border);
+      cursor: pointer;
+      font-size: 11px;
+      background: var(--bg);
+      color: var(--text2);
+      transition: all 0.15s;
+    }
+    .btn-feedback.approve:hover { background: #14532d; border-color: var(--success); color: var(--success); }
+    .btn-feedback.reject:hover  { background: #450a0a; border-color: var(--error);   color: var(--error); }
+    .btn-feedback.approved { background: #14532d; color: var(--success); border-color: var(--success); }
+    .btn-feedback.rejected { background: #450a0a; color: var(--error);   border-color: var(--error); }
+
+    .feedback-input {
+      display: none;
+      margin-top: 6px;
+    }
+    .feedback-input.visible { display: flex; gap: 6px; }
+    .feedback-input input {
+      flex: 1;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 4px 8px;
+      color: var(--text);
+      font-size: 11px;
+    }
+    .feedback-input button {
+      padding: 4px 10px;
+      background: var(--accent);
+      border: none;
+      border-radius: 5px;
+      color: white;
+      cursor: pointer;
+      font-size: 11px;
+    }
+
+    /* Thinking indicator */
+    .thinking {
+      display: flex;
+      gap: 4px;
+      padding: 10px 14px;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      border-bottom-left-radius: 3px;
+      align-self: flex-start;
+      width: 60px;
+    }
+    .thinking span {
+      width: 6px; height: 6px;
+      background: var(--text3);
+      border-radius: 50%;
+      animation: bounce 1.2s infinite;
+    }
+    .thinking span:nth-child(2) { animation-delay: 0.2s; }
+    .thinking span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes bounce {
+      0%, 60%, 100% { transform: translateY(0); }
+      30% { transform: translateY(-5px); }
+    }
+
+    #chat-input-area {
+      padding: 12px 16px;
+      background: var(--bg2);
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 8px;
+    }
+    #chat-input {
+      flex: 1;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 12px;
+      color: var(--text);
+      font-size: 13px;
+      resize: none;
+      height: 40px;
+      transition: border-color 0.15s;
+    }
+    #chat-input:focus { outline: none; border-color: var(--accent); }
+    #btn-send {
+      padding: 8px 16px;
+      background: var(--accent);
+      border: none;
+      border-radius: 8px;
+      color: white;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 13px;
+      transition: opacity 0.15s;
+    }
+    #btn-send:hover { opacity: 0.85; }
+    #btn-send:disabled { opacity: 0.4; cursor: default; }
+
+    /* ── Watcher Panel (right) ──────────────────────── */
+    #watcher-panel {
+      background: var(--bg2);
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      transition: width 0.2s;
+    }
+    #watcher-panel.collapsed { width: 0; overflow: hidden; }
+
+    #watcher-header {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    #watcher-header h3 { font-size: 12px; font-weight: 600; flex: 1; }
+    #watcher-header .eye { font-size: 14px; }
+    #btn-reflect {
+      padding: 3px 10px;
+      background: #3b0764;
+      border: 1px solid #7c3aed;
+      border-radius: 5px;
+      color: #c4b5fd;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    #btn-reflect:hover { background: #4c1d95; }
+    #btn-collapse-watcher {
+      background: transparent;
+      border: none;
+      color: var(--text3);
+      cursor: pointer;
+      font-size: 14px;
+      padding: 2px;
+    }
+
+    #watcher-tabs {
+      display: flex;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .watcher-tab {
+      flex: 1;
+      padding: 6px;
+      text-align: center;
+      font-size: 11px;
+      color: var(--text3);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+    }
+    .watcher-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+    #watcher-content { flex: 1; overflow-y: auto; padding: 10px; }
+
+    .watcher-observation {
+      padding: 8px;
+      border-radius: 6px;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      margin-bottom: 6px;
+      font-size: 11px;
+    }
+    .watcher-observation .obs-time { color: var(--text3); font-size: 10px; margin-bottom: 3px; }
+    .watcher-observation.warning { border-color: var(--warn); }
+    .watcher-observation.concern { border-color: var(--error); }
+
+    /* ── Control Bar (bottom) ───────────────────────── */
+    #control-bar {
+      background: var(--bg2);
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      gap: 10px;
+    }
+
+    .ctrl-btn {
+      padding: 6px 16px;
+      border-radius: 7px;
+      border: 1px solid var(--border);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      background: var(--bg3);
+      color: var(--text);
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+    .ctrl-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+    #btn-handoff {
+      background: #14532d;
+      border-color: var(--success);
+      color: var(--success);
+    }
+    #btn-handoff:hover { background: #166534; }
+
+    #btn-im-back {
+      background: var(--bg3);
+      border-color: var(--border);
+      color: var(--text2);
+      display: none;
+    }
+    #btn-im-back.visible {
+      display: block;
+      background: #1e3a5f;
+      border-color: var(--accent2);
+      color: var(--accent2);
+    }
+
+    #btn-stop {
+      background: #450a0a;
+      border-color: var(--error);
+      color: var(--error);
+    }
+    #btn-stop:hover { background: #7f1d1d; }
+
+    .ctrl-divider {
+      width: 1px;
+      height: 24px;
+      background: var(--border);
+      flex-shrink: 0;
+    }
+
+    /* Git controls */
+    #git-section {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: auto;
+    }
+    #git-section select {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      color: var(--text2);
+      padding: 4px 8px;
+      font-size: 11px;
+    }
+    #git-changes {
+      font-size: 11px;
+      color: var(--text3);
+    }
+    #git-changes.has-changes { color: var(--warn); }
+
+    #btn-toggle-watcher {
+      padding: 6px 10px;
+      border-radius: 7px;
+      border: 1px solid var(--border);
+      background: var(--bg3);
+      color: var(--text3);
+      cursor: pointer;
+      font-size: 11px;
+    }
+    #btn-toggle-watcher:hover { color: var(--accent); border-color: var(--accent); }
+
+    /* ── Overlay: Emergency Stop ───────────────────── */
+    #stop-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.8);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+    #stop-overlay.visible { display: flex; }
+    #stop-dialog {
+      background: var(--bg2);
+      border: 1px solid var(--error);
+      border-radius: 12px;
+      padding: 24px;
+      width: 400px;
+    }
+    #stop-dialog h3 { color: var(--error); margin-bottom: 12px; font-size: 15px; }
+    #stop-dialog p  { color: var(--text2); font-size: 12px; margin-bottom: 14px; }
+    #stop-note {
+      width: 100%;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px;
+      color: var(--text);
+      font-size: 12px;
+      resize: vertical;
+      min-height: 80px;
+      margin-bottom: 12px;
+    }
+    .stop-buttons { display: flex; gap: 8px; justify-content: flex-end; }
+
+    /* ── Modal: New Project ────────────────────────── */
+    #new-project-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.7);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+    #new-project-modal.visible { display: flex; }
+    #new-project-dialog {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      width: 380px;
+    }
+    #new-project-dialog h3 { margin-bottom: 16px; }
+    .form-row { margin-bottom: 12px; }
+    .form-row label { display: block; font-size: 11px; color: var(--text3); margin-bottom: 4px; }
+    .form-row input {
+      width: 100%;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 7px 10px;
+      color: var(--text);
+      font-size: 12px;
+    }
+
+    /* ── Scrollbar ─────────────────────────────────── */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  </style>
+</head>
+<body>
+
+<!-- ── Project Bar ─────────────────────────────────── -->
+<div id="project-bar">
+  <div class="logo">ZION</div>
+  <div id="project-tabs"></div>
+  <button id="btn-new-project" onclick="showNewProject()">+ New Project</button>
+  <div class="spacer"></div>
+  <div id="daemon-indicator">
+    <div class="dot"></div>
+    <span id="daemon-label">daemon off</span>
+  </div>
+</div>
+
+<!-- ── Main Area ───────────────────────────────────── -->
+<div id="main">
+
+  <!-- Left: Agent Panel -->
+  <div id="agent-panel">
+    <h3>Agents</h3>
+    <div id="connections">
+      <svg id="conn-svg" viewBox="0 0 220 60" preserveAspectRatio="none">
+        <line id="conn-m-w" x1="110" y1="10" x2="50" y2="50"
+              stroke="#2a2a3a" stroke-width="1.5" stroke-dasharray="4"/>
+        <line id="conn-m-r" x1="110" y1="10" x2="110" y2="50"
+              stroke="#2a2a3a" stroke-width="1.5" stroke-dasharray="4"/>
+        <line id="conn-m-l" x1="110" y1="10" x2="170" y2="50"
+              stroke="#2a2a3a" stroke-width="1.5" stroke-dasharray="4"/>
+      </svg>
+    </div>
+    <div id="agent-cards"></div>
+  </div>
+
+  <!-- Centre: Chat -->
+  <div id="chat-area">
+    <div id="chat-header">
+      <div>
+        <h2>Manager</h2>
+        <div class="subtitle" id="chat-subtitle">Ready — active project: Garden Business</div>
+      </div>
+      <div id="briefing-badge" onclick="showBriefing()">📋 New Briefing</div>
+    </div>
+    <div id="chat-messages">
+      <div class="msg system">Zion is online. Tell Manager what you need.</div>
+    </div>
+    <div id="chat-input-area">
+      <textarea id="chat-input" placeholder="Talk to Manager…" rows="1"
+        onkeydown="handleKey(event)"></textarea>
+      <button id="btn-send" onclick="sendMessage()">Send</button>
+    </div>
+  </div>
+
+  <!-- Right: Watcher Panel -->
+  <div id="watcher-panel">
+    <div id="watcher-header">
+      <span class="eye">👁</span>
+      <h3>Watcher</h3>
+      <button id="btn-reflect" onclick="startReflect()">Reflect</button>
+      <button id="btn-collapse-watcher" onclick="toggleWatcher()">◀</button>
+    </div>
+    <div id="watcher-tabs">
+      <div class="watcher-tab active" onclick="switchWatcherTab('log', this)">Log</div>
+      <div class="watcher-tab" onclick="switchWatcherTab('history', this)">History</div>
+      <div class="watcher-tab" onclick="switchWatcherTab('briefings', this)">Briefings</div>
+    </div>
+    <div id="watcher-content"></div>
+  </div>
+
+</div>
+
+<!-- ── Control Bar ─────────────────────────────────── -->
+<div id="control-bar">
+  <button class="ctrl-btn" id="btn-handoff"  onclick="handoff()">✈ Hand off to agents</button>
+  <button class="ctrl-btn" id="btn-im-back"  onclick="imBack()">🏠 I'm back</button>
+  <div class="ctrl-divider"></div>
+  <button class="ctrl-btn" id="btn-stop"     onclick="showStop()">⛔ Stop everything</button>
+  <div class="ctrl-divider"></div>
+  <button class="ctrl-btn" onclick="toggleDaemon()">⚙ Daemon</button>
+
+  <div id="git-section">
+    <span id="git-changes">0 changes</span>
+    <select id="branch-select"><option>main</option></select>
+    <button class="ctrl-btn" onclick="syncGit()" style="padding:6px 12px;">↑ Sync to GitHub</button>
+  </div>
+  <button id="btn-toggle-watcher" onclick="toggleWatcher()">👁 Watcher</button>
+</div>
+
+<!-- ── Emergency Stop Overlay ──────────────────────── -->
+<div id="stop-overlay">
+  <div id="stop-dialog">
+    <h3>⛔ Stop Everything</h3>
+    <p>All agents will pause immediately. Add a note explaining what to correct (optional).</p>
+    <textarea id="stop-note" placeholder="What needs correcting? (optional)"></textarea>
+    <div class="stop-buttons">
+      <button class="ctrl-btn" onclick="hideStop()">Cancel</button>
+      <button class="ctrl-btn" id="btn-stop" onclick="confirmStop()"
+              style="background:#450a0a;border-color:var(--error);color:var(--error)">
+        Stop All Agents
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ── New Project Modal ───────────────────────────── -->
+<div id="new-project-modal">
+  <div id="new-project-dialog">
+    <h3>New Project</h3>
+    <div class="form-row">
+      <label>Project Name</label>
+      <input id="new-project-name" type="text" placeholder="e.g. Community Composting">
+    </div>
+    <div class="form-row">
+      <label>Short ID (no spaces)</label>
+      <input id="new-project-id" type="text" placeholder="e.g. community_composting">
+    </div>
+    <div class="stop-buttons">
+      <button class="ctrl-btn" onclick="hideNewProject()">Cancel</button>
+      <button class="ctrl-btn" onclick="createProject()"
+              style="background:var(--accent);border-color:var(--accent);color:white">
+        Create Project
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────────
+const socket = io();
+let appState = {};
+let chatHistory = [];
+let harleyPresent = true;
+let watcherOpen = true;
+let activeWatcherTab = 'log';
+let lastManagerResponse = null;
+
+const AGENT_DEFS = [
+  { id: 'manager',  name: 'Manager',  role: 'Central coordinator',  icon: '🧠' },
+  { id: 'worker',   name: 'Worker',   role: 'Does the actual work', icon: '⚙️' },
+  { id: 'reviewer', name: 'Reviewer', role: 'Checks governance',    icon: '🔍' },
+  { id: 'logger',   name: 'Logger',   role: 'Writes to repo',       icon: '📝' },
+  { id: 'watcher',  name: 'Watcher',  role: 'Watches everything',   icon: '👁' },
+];
+
+let agentStates = {};
+AGENT_DEFS.forEach(a => {
+  agentStates[a.id] = { status: 'idle', last: '—', current: '—', next: '—' };
+});
+
+// ── Init ───────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  renderAgentCards();
+  loadState();
+  loadWatcherLog();
+  loadGitStatus();
+  setInterval(loadState, 10000);
+  setInterval(loadGitStatus, 30000);
+});
+
+// ── SocketIO ───────────────────────────────────────────────────────────────────
+socket.on('connected', data => {
+  harleyPresent = data.harley_present;
+  updatePresenceUI();
+});
+
+socket.on('agent_status', data => {
+  const { agent, status, action } = data;
+  if (agentStates[agent]) {
+    const prev = agentStates[agent].current;
+    agentStates[agent].last    = prev !== '—' ? prev : agentStates[agent].last;
+    agentStates[agent].current = action;
+    agentStates[agent].status  = status;
+    renderAgentCards();
+    updateConnections(agent, status);
+  }
+});
+
+socket.on('status_change', data => {
+  harleyPresent = data.harley_present;
+  updatePresenceUI();
+});
+
+socket.on('briefing_ready', data => {
+  addMsg('briefing', data.briefing);
+  document.getElementById('briefing-badge').classList.remove('visible');
+});
+
+socket.on('emergency_stop', data => {
+  addMsg('system', `⛔ Emergency stop. Note: ${data.note || 'none'}`);
+});
+
+socket.on('task_added', task => {
+  addMsg('system', `Task added: ${task.task} [${task.project}]`);
+});
+
+socket.on('project_switched', data => {
+  updateProjectTab(data.project_id);
+});
+
+// ── API calls ──────────────────────────────────────────────────────────────────
+async function api(endpoint, method = 'GET', body = null) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(endpoint, opts);
+  return res.json();
+}
+
+async function loadState() {
+  const data = await api('/api/state');
+  appState = data;
+  renderProjectTabs(data.config?.projects || []);
+  updateSubtitle(data.state?.active_project);
+  if (data.state?.unread_briefing) {
+    document.getElementById('briefing-badge').classList.add('visible');
+  }
+  const daemon = await api('/api/daemon/status');
+  updateDaemonIndicator(daemon.running, daemon.tasks_today, daemon.daily_cap);
+}
+
+async function loadWatcherLog() {
+  if (activeWatcherTab === 'log') {
+    const data = await api('/api/watcher');
+    renderWatcherLog(data.observations || []);
+  } else if (activeWatcherTab === 'briefings') {
+    const data = await api('/api/briefings');
+    renderBriefingHistory(data.history || []);
+  }
+  setTimeout(loadWatcherLog, 15000);
+}
+
+async function loadGitStatus() {
+  const data = await api('/api/git/status');
+  const count = data.status?.changed_files || 0;
+  const el = document.getElementById('git-changes');
+  el.textContent = `${count} change${count !== 1 ? 's' : ''}`;
+  el.className = count > 0 ? 'has-changes' : '';
+  const sel = document.getElementById('branch-select');
+  const current = sel.value;
+  sel.innerHTML = '';
+  (data.branches || ['main']).forEach(b => {
+    const opt = document.createElement('option');
+    opt.value = b;
+    opt.textContent = b;
+    if (b === current) opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+// ── Chat ───────────────────────────────────────────────────────────────────────
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+}
+
+async function sendMessage() {
+  const input = document.getElementById('chat-input');
+  const msg = input.value.trim();
+  if (!msg) return;
+
+  input.value = '';
+  document.getElementById('btn-send').disabled = true;
+
+  addMsg('harley', msg);
+  chatHistory.push({ role: 'user', content: msg });
+
+  // Thinking indicator
+  const thinkId = 'think-' + Date.now();
+  addThinking(thinkId);
+
+  const data = await api('/api/chat', 'POST', {
+    message: msg,
+    history: chatHistory
+  });
+
+  removeElement(thinkId);
+  document.getElementById('btn-send').disabled = false;
+
+  if (data.success) {
+    lastManagerResponse = { message: msg, response: data.response };
+    chatHistory.push({ role: 'assistant', content: data.response });
+    addMsg('manager', data.response, true);
+  } else {
+    addMsg('system', `⚠️ ${data.response}`);
+  }
+}
+
+function addMsg(type, content, withFeedback = false) {
+  const container = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = `msg ${type}`;
+
+  if (type === 'briefing') {
+    div.textContent = content;
+  } else {
+    div.innerHTML = escapeHtml(content).replace(/\n/g, '<br>');
+  }
+
+  if (withFeedback && type === 'manager') {
+    const msgId = 'msg-' + Date.now();
+    div.id = msgId;
+
+    const feedRow = document.createElement('div');
+    feedRow.className = 'feedback-row';
+    feedRow.innerHTML = `
+      <button class="btn-feedback approve" onclick="giveFeedback('${msgId}', true)">✓ This is what I want</button>
+      <button class="btn-feedback reject"  onclick="giveFeedback('${msgId}', false)">✗ Not quite</button>
+    `;
+    div.appendChild(feedRow);
+
+    const feedInput = document.createElement('div');
+    feedInput.className = 'feedback-input';
+    feedInput.id = 'fi-' + msgId;
+    feedInput.innerHTML = `
+      <input type="text" placeholder="What did you want instead? (optional)">
+      <button onclick="submitFeedback('${msgId}')">Send feedback</button>
+    `;
+    div.appendChild(feedInput);
+  }
+
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+function addThinking(id) {
+  const container = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.id = id;
+  div.className = 'thinking';
+  div.innerHTML = '<span></span><span></span><span></span>';
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+function removeElement(id) {
+  const el = document.getElementById(id);
+  if (el) el.remove();
+}
+
+function escapeHtml(text) {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function giveFeedback(msgId, approved) {
+  const div = document.getElementById(msgId);
+  if (!div) return;
+  const btns = div.querySelectorAll('.btn-feedback');
+  btns.forEach(b => {
+    b.className = 'btn-feedback ' + (approved
+      ? (b.classList.contains('approve') ? 'approved' : 'reject')
+      : (b.classList.contains('reject')  ? 'rejected' : 'approve'));
+  });
+
+  if (!approved) {
+    document.getElementById('fi-' + msgId)?.classList.add('visible');
+  } else {
+    storeFeedback(approved, '');
+  }
+}
+
+async function submitFeedback(msgId) {
+  const input = document.querySelector(`#fi-${msgId} input`);
+  const text = input?.value || '';
+  storeFeedback(false, text);
+  document.getElementById('fi-' + msgId)?.classList.remove('visible');
+  addMsg('system', 'Feedback saved. Manager will learn from this.');
+}
+
+async function storeFeedback(approved, text) {
+  if (!lastManagerResponse) return;
+  await api('/api/feedback', 'POST', {
+    approved,
+    message: lastManagerResponse.message,
+    response: lastManagerResponse.response,
+    feedback_text: text
+  });
+}
+
+// ── Controls ───────────────────────────────────────────────────────────────────
+async function handoff() {
+  const data = await api('/api/handoff', 'POST');
+  harleyPresent = false;
+  updatePresenceUI();
+  addMsg('system', '✈ ' + data.message);
+}
+
+async function imBack() {
+  addMsg('system', '🏠 Welcome back! Generating briefing...');
+  const data = await api('/api/im_back', 'POST');
+  harleyPresent = true;
+  updatePresenceUI();
+}
+
+function updatePresenceUI() {
+  document.getElementById('btn-handoff').style.display  = harleyPresent ? 'block' : 'none';
+  document.getElementById('btn-im-back').classList.toggle('visible', !harleyPresent);
+}
+
+function showStop()  { document.getElementById('stop-overlay').classList.add('visible'); }
+function hideStop()  { document.getElementById('stop-overlay').classList.remove('visible'); }
+
+async function confirmStop() {
+  const note = document.getElementById('stop-note').value;
+  await api('/api/stop', 'POST', { note });
+  hideStop();
+  document.getElementById('stop-note').value = '';
+}
+
+function showBriefing() {
+  api('/api/briefings').then(data => {
+    addMsg('briefing', data.latest);
+    document.getElementById('briefing-badge').classList.remove('visible');
+  });
+}
+
+async function toggleDaemon() {
+  const status = await api('/api/daemon/status');
+  if (status.running) {
+    await api('/api/daemon/stop', 'POST');
+    addMsg('system', '⚙ Daemon stopped.');
+  } else {
+    await api('/api/daemon/start', 'POST');
+    addMsg('system', '⚙ Daemon started. Agents can now work autonomously.');
+  }
+  loadState();
+}
+
+async function syncGit() {
+  const branch = document.getElementById('branch-select').value;
+  const msg = `Zion sync ${new Date().toISOString().split('T')[0]}`;
+  addMsg('system', `Syncing to GitHub (${branch})...`);
+  const data = await api('/api/git/push', 'POST', { branch, message: msg });
+  addMsg('system', data.success ? `✓ ${data.message}` : `✗ ${data.message}`);
+  loadGitStatus();
+}
+
+// ── Projects ───────────────────────────────────────────────────────────────────
+function renderProjectTabs(projects) {
+  const container = document.getElementById('project-tabs');
+  const active = appState.state?.active_project;
+  container.innerHTML = '';
+
+  projects.forEach(p => {
+    const div = document.createElement('div');
+    div.className = 'project-tab' + (p.id === active ? ' active' : '');
+    div.innerHTML = `<span class="dot"></span>${p.name}`;
+    div.onclick = () => switchProject(p.id);
+    container.appendChild(div);
+  });
+}
+
+async function switchProject(id) {
+  await api('/api/switch_project', 'POST', { project_id: id });
+  await loadState();
+  addMsg('system', `Switched to: ${id.replace(/_/g, ' ')}`);
+}
+
+function updateProjectTab(id) {
+  document.querySelectorAll('.project-tab').forEach(el => {
+    el.classList.toggle('active', el.textContent.trim().toLowerCase().replace(/ /g,'_') === id);
+  });
+}
+
+function showNewProject()  { document.getElementById('new-project-modal').classList.add('visible'); }
+function hideNewProject()  { document.getElementById('new-project-modal').classList.remove('visible'); }
+
+async function createProject() {
+  const name = document.getElementById('new-project-name').value.trim();
+  const id   = document.getElementById('new-project-id').value.trim()
+                       .toLowerCase().replace(/\s+/g, '_');
+  if (!name || !id) return;
+  await api('/api/chat', 'POST', {
+    message: `Create a new project called "${name}" with ID "${id}". Set it up in the repo.`,
+    history: []
+  });
+  hideNewProject();
+  addMsg('system', `Project "${name}" creation requested.`);
+  document.getElementById('new-project-name').value = '';
+  document.getElementById('new-project-id').value = '';
+}
+
+// ── Agents ─────────────────────────────────────────────────────────────────────
+function renderAgentCards() {
+  const container = document.getElementById('agent-cards');
+  container.innerHTML = '';
+  AGENT_DEFS.forEach(def => {
+    const state = agentStates[def.id];
+    const card = document.createElement('div');
+    card.className = `agent-card ${state.status}`;
+    card.id = `card-${def.id}`;
+    card.innerHTML = `
+      <div class="agent-header">
+        <div class="agent-icon ${def.id}">${def.icon}</div>
+        <div>
+          <div class="agent-name">${def.name}</div>
+          <div class="agent-role">${def.role}</div>
+        </div>
+        <span class="agent-status-badge status-${state.status}">${state.status}</span>
+      </div>
+      <div class="agent-rows">
+        <div class="agent-row">
+          <span class="label">Last:</span>
+          <span class="value" title="${state.last}">${state.last}</span>
+        </div>
+        <div class="agent-row">
+          <span class="label">Now:</span>
+          <span class="value active" title="${state.current}">${state.current}</span>
+        </div>
+        <div class="agent-row">
+          <span class="label">Next:</span>
+          <span class="value" title="${state.next}">${state.next}</span>
+        </div>
+      </div>
+    `;
+    container.appendChild(card);
+  });
+}
+
+function updateConnections(activeAgent, status) {
+  const color = status === 'working' ? '#818cf8' : '#2a2a3a';
+  const lines = {
+    worker:   document.getElementById('conn-m-w'),
+    reviewer: document.getElementById('conn-m-r'),
+    logger:   document.getElementById('conn-m-l'),
+  };
+  Object.entries(lines).forEach(([agent, line]) => {
+    if (line) {
+      line.setAttribute('stroke', agent === activeAgent ? color : '#2a2a3a');
+      line.setAttribute('stroke-dasharray', agent === activeAgent ? '0' : '4');
+    }
+  });
+}
+
+// ── Watcher ────────────────────────────────────────────────────────────────────
+function toggleWatcher() {
+  watcherOpen = !watcherOpen;
+  document.getElementById('watcher-panel').classList.toggle('collapsed', !watcherOpen);
+  document.getElementById('btn-toggle-watcher').textContent = watcherOpen ? '👁 Watcher' : '👁 Show Watcher';
+}
+
+function switchWatcherTab(tab, el) {
+  activeWatcherTab = tab;
+  document.querySelectorAll('.watcher-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  loadWatcherLog();
+}
+
+function renderWatcherLog(observations) {
+  const content = document.getElementById('watcher-content');
+  if (!observations.length) {
+    content.innerHTML = '<p style="color:var(--text3);font-size:11px;padding:8px">No observations yet.</p>';
+    return;
+  }
+  content.innerHTML = [...observations].reverse().slice(0, 30).map(o => `
+    <div class="watcher-observation ${o.severity}">
+      <div class="obs-time">${o.timestamp?.split('T')[0] || ''} · ${o.type}</div>
+      <div>${escapeHtml(o.observation)}</div>
+    </div>
+  `).join('');
+}
+
+function renderBriefingHistory(history) {
+  const content = document.getElementById('watcher-content');
+  if (!history.length) {
+    content.innerHTML = '<p style="color:var(--text3);font-size:11px;padding:8px">No briefings yet.</p>';
+    return;
+  }
+  content.innerHTML = history.map(b => `
+    <div class="watcher-observation" style="cursor:pointer"
+         onclick="loadBriefingFile('${b.name}')">
+      <div class="obs-time">${b.date}</div>
+      <div>${b.name}</div>
+    </div>
+  `).join('');
+}
+
+async function loadBriefingFile(filename) {
+  const data = await api(`/api/briefing/${filename}`);
+  addMsg('briefing', data.content);
+}
+
+async function startReflect() {
+  addMsg('system', '👁 Watcher is preparing reflection...');
+  const data = await api('/api/reflect', 'POST');
+  if (data.success) {
+    addMsg('manager', '**Watcher reflection:**\n\n' + data.reflection, false);
+  } else {
+    addMsg('system', '⚠️ Watcher unavailable: ' + data.reflection);
+  }
+}
+
+// ── UI helpers ─────────────────────────────────────────────────────────────────
+function updateSubtitle(projectId) {
+  if (!projectId) return;
+  const name = projectId.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  document.getElementById('chat-subtitle').textContent = `Ready — active project: ${name}`;
+}
+
+function updateDaemonIndicator(running, today, cap) {
+  const el = document.getElementById('daemon-indicator');
+  el.className = 'daemon-indicator' + (running ? ' running' : '');
+  document.getElementById('daemon-label').textContent =
+    running ? `daemon running · ${today}/${cap} tasks` : 'daemon off';
+}
+</script>
+</body>
+</html>
