@@ -1,0 +1,14 @@
+# Zion Governance Hash Manifest
+# Generated: 2026-03-15T13:16:56.500458+00:00
+# Files: 9
+# Do not edit manually. Run: python governance/validator.py --rehash
+
+8a00f2b5ed1880c7ba9ff75bb30a39c03ba6075d5b482d97cd09dffdfa512465  governance/charter.yaml
+cb1f38ac34bec716fd0de8db2ed2315bb2ddf919b4dbaf0ed7a537e4fa07c2f8  governance/permissions.json
+adf08c4095eef0e761f46b0788e226c37ffb7ab94902073a11b22935a72e0595  governance/validator.py
+a27caaaa0540b8b873b3b760da396e055b45458b68ba19fe633e048ff18a4ddc  prompts/logger_prompt.md
+f1c53ef7f39d91547691afa4e879899d5beefe991de2ee566ce113dbf00953f3  prompts/manager_prompt.md
+45ca9e0cc6e97e792d41b82fd5add93c850e1329790baff16b2a2b6812977b3a  prompts/page_minus_one.md
+5039577c7312332c2333add83347a5ae2fc4d17ec877fd756af4c577b843f6f5  prompts/reviewer_prompt.md
+dfb1072685f4729d2c1f99bc556b2316bea406884ed0ba01365745f2c2bdd8f5  prompts/watcher_prompt.md
+978553895e91d4c4932431db4aac4b70d5df981b9db670b7cbbd7ff8e8e3e7a5  prompts/worker_prompt.md

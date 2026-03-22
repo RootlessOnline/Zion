@@ -1,7 +1,7 @@
 {
   "collective_repo_path": "~/RootlessOnline",
   "ollama_host": "http://localhost:11434",
-  "model": "gemma3:12b",
+  "model": "deepseek-r1:8b",
   "dashboard_port": 5000,
   "daemon": {
     "task_cooldown_seconds": 120,
@@ -9,13 +9,38 @@
     "daily_task_cap": 20,
     "heartbeat_interval_seconds": 900,
     "inactivity_failsafe_hours": 8,
-    "task_timeout_seconds": 180
+    "task_timeout_seconds": 180,
+    "auto_pull_tasks_md": false
   },
   "projects": [
-    {"id": "garden_business", "name": "Garden Business", "phase": 1, "active": true, "repo_path": "PROJECTS/garden_business"},
-    {"id": "desert_restoration", "name": "Desert Restoration", "phase": 2, "active": false, "repo_path": "PROJECTS/desert_restoration"},
-    {"id": "collective_hub", "name": "Collective Hub", "phase": 2, "active": false, "repo_path": "PROJECTS/collective_hub"},
-    {"id": "political_party", "name": "Political Party", "phase": 4, "active": false, "repo_path": "PROJECTS/political_party"}
+    {
+      "id": "garden_business",
+      "name": "Garden Business",
+      "phase": 1,
+      "active": true,
+      "repo_path": "PROJECTS/garden_business"
+    },
+    {
+      "id": "desert_restoration",
+      "name": "Desert Restoration",
+      "phase": 2,
+      "active": false,
+      "repo_path": "PROJECTS/desert_restoration"
+    },
+    {
+      "id": "collective_hub",
+      "name": "Collective Hub",
+      "phase": 2,
+      "active": false,
+      "repo_path": "PROJECTS/collective_hub"
+    },
+    {
+      "id": "political_party",
+      "name": "Political Party",
+      "phase": 4,
+      "active": false,
+      "repo_path": "PROJECTS/political_party"
+    }
   ],
   "github": {
     "collective_repo": "RootlessOnline/RootlessOnline",

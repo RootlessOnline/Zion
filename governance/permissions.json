@@ -1,0 +1,33 @@
+{
+  "_comment": "Write allowlist for Zion agents. Paths are relative to BASE_DIR (~/Zion). Only paths listed here may be written to. Edit this file to grant or revoke write access. The write_gateway checks this on every write.",
+
+  "allowed_write_paths": [
+    "data/",
+    "data/briefings/",
+    "STATE/",
+    "PROJECTS/"
+  ],
+
+  "append_only": [
+    "STATE/worklog.md",
+    "STATE/decision_log.md",
+    "data/error_log.json",
+    "data/feedback_log.json",
+    "data/watcher_log.json"
+  ],
+
+  "never_write": [
+    "governance/",
+    "prompts/",
+    "daemon/",
+    "dashboard/",
+    "scripts/",
+    "config.json",
+    "app.py",
+    "requirements.txt"
+  ],
+
+  "version": "1.0",
+  "last_updated": "2026-03-13",
+  "owner": "Harley"
+}

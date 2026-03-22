@@ -14,6 +14,12 @@ from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO
 from flask_cors import CORS
 
+# ── Governance boot check ─────────────────────────────────────────────────────
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).parent / "governance"))
+from validator import boot_check
+boot_check()
+
 # ── Setup ──────────────────────────────────────────────────────────────────────
 
 BASE_DIR = Path(__file__).parent
@@ -30,8 +36,10 @@ import sys
 sys.path.insert(0, str(BASE_DIR / "daemon"))
 from collective_daemon import (
     CollectiveDaemon, load_config, load_json, save_json,
-    now_iso, generate_briefing, call_ollama, load_prompt
+    now_iso, generate_briefing, call_ollama, load_prompt, assemble_prompt
 )
+from write_gateway import safe_write, safe_write_json, safe_append, WriteViolation
+from proposer import run_proposer, approve_proposal, dismiss_proposal
 
 config = load_config()
 daemon = CollectiveDaemon(socketio=socketio)
@@ -101,6 +109,15 @@ def git_status(repo_path: str) -> dict:
 
 def git_push(repo_path: str, branch: str, message: str) -> dict:
     try:
+        from dotenv import load_dotenv
+        load_dotenv()
+        token = os.environ.get("GITHUB_TOKEN", "")
+        user = os.environ.get("GITHUB_USER", "RootlessOnline")
+
+        # Set remote URL with token
+        remote_url = f"https://{user}:{token}@github.com/{user}/Zion.git"
+        subprocess.run(["git", "remote", "set-url", "origin", remote_url], cwd=repo_path, timeout=10)
+
         subprocess.run(["git", "add", "."], cwd=repo_path, timeout=30)
         subprocess.run(
             ["git", "commit", "-m", message],
@@ -177,10 +194,10 @@ def api_im_back():
         "resume_on_start": False,
         "unread_briefing": False
     })
-    briefing = generate_briefing(away_since, config)
+    briefing, tasks_data = generate_briefing(away_since, config)
     socketio.emit("status_change", {"harley_present": True})
-    socketio.emit("briefing_ready", {"briefing": briefing})
-    return jsonify({"success": True, "briefing": briefing})
+    socketio.emit("briefing_ready", {"briefing": briefing, "tasks": tasks_data})
+    return jsonify({"success": True, "briefing": briefing, "tasks": tasks_data})
 
 
 @app.route("/api/stop", methods=["POST"])
@@ -244,15 +261,14 @@ def api_add_task():
 
 @app.route("/api/chat", methods=["POST"])
 def api_chat():
-    """Send a message to Manager agent."""
+    """Send a message to Manager agent. Returns thinking + answer separately."""
     message = request.json.get("message", "")
     history = request.json.get("history", [])
     active_project = get_state().get("active_project", "garden_business")
 
-    system_prompt = load_prompt("manager")
+    system_prompt = assemble_prompt("manager")
     context_msg = f"[Active project: {active_project}]\n\nHarley says: {message}"
 
-    # Build messages with history
     messages = [{"role": "system", "content": system_prompt}]
     for h in history[-10:]:
         messages.append({"role": h["role"], "content": h["content"]})
@@ -266,19 +282,32 @@ def api_chat():
             "stream": False
         }
         response = requests.post(url, json=payload, timeout=180)
-        response.raise_for_status()
-        result = response.json()["message"]["content"]
 
-        # Log to watcher
-        watcher_log = DATA_DIR / "watcher_log.json"
-        watcher_data = load_json(watcher_log)
+        if not response.ok:
+            return jsonify({"success": False, "response": f"Ollama error {response.status_code}: {response.text[:200]}"})
+
+        msg = response.json().get("message", {})
+        thinking = msg.get("thinking", "")
+        answer = msg.get("content", "")
+
+        # DeepSeek-r1 sometimes embeds think tags inside content
+        if not thinking and "<think>" in answer:
+            import re
+            m = re.search(r"<think>(.*?)</think>", answer, re.DOTALL)
+            if m:
+                thinking = m.group(1).strip()
+                answer = answer.replace(m.group(0), "").strip()
+
+        result = f"<think>{thinking}</think>\n{answer}" if thinking else answer
+
+        watcher_data = load_json(DATA_DIR / "watcher_log.json")
         watcher_data.setdefault("chat_history", []).append({
             "timestamp": now_iso(),
             "project": active_project,
             "harley": message,
-            "manager": result
+            "manager": answer
         })
-        save_json(watcher_log, watcher_data)
+        save_json(DATA_DIR / "watcher_log.json", watcher_data)
 
         return jsonify({"success": True, "response": result})
     except Exception as e:
@@ -316,7 +345,7 @@ def api_reflect():
     observations = watcher_data.get("observations", [])
     chat_history = watcher_data.get("chat_history", [])
 
-    system_prompt = load_prompt("watcher")
+    system_prompt = assemble_prompt("watcher")
     context = (
         f"RECENT OBSERVATIONS:\n{json.dumps(observations[-20:], indent=2)}\n\n"
         f"RECENT CHAT HISTORY:\n{json.dumps(chat_history[-10:], indent=2)}\n\n"
@@ -328,6 +357,151 @@ def api_reflect():
         return jsonify({"success": True, "reflection": response})
     except Exception as e:
         return jsonify({"success": False, "reflection": f"Watcher unavailable: {str(e)}"})
+
+
+@app.route("/api/tasks", methods=["GET"])
+def api_tasks():
+    """Return all tasks — pending, completed, escalated, benched."""
+    queue_data = load_json(DATA_DIR / "task_queue.json")
+    queue = queue_data.get("queue", [])
+
+    # Load worklog outputs for completed tasks
+    worklog_entries = {}
+    try:
+        repo_path = Path(config["collective_repo_path"]).expanduser()
+        worklog = repo_path / "STATE" / "worklog.md"
+        if worklog.exists():
+            import re
+            wlog = worklog.read_text()
+            for block in re.split(r"\n---\n", wlog):
+                id_match = re.search(r"## (\S+) —", block)
+                output_match = re.search(r"\*\*Output:\*\* (.+?)(?:\n\*\*|$)", block, re.DOTALL)
+                if id_match and output_match:
+                    worklog_entries[id_match.group(1)] = output_match.group(1).strip()
+    except Exception:
+        pass
+
+    for t in queue:
+        if t["status"] == "completed" and t["id"] in worklog_entries:
+            t["output"] = worklog_entries[t["id"]]
+
+    return jsonify({"success": True, "tasks": queue})
+
+
+@app.route("/api/task/reorder", methods=["POST"])
+def api_task_reorder():
+    """Reorder pending tasks in the queue."""
+    ordered_ids = request.json.get("ids", [])
+    queue_path = DATA_DIR / "task_queue.json"
+    queue_data = load_json(queue_path)
+    queue = queue_data.get("queue", [])
+
+    # Separate pending from non-pending
+    pending = {t["id"]: t for t in queue if t["status"] == "pending"}
+    non_pending = [t for t in queue if t["status"] != "pending"]
+
+    # Reorder pending by provided id list
+    reordered = [pending[tid] for tid in ordered_ids if tid in pending]
+    # Add any pending tasks not in the list at the end
+    reordered += [t for t in queue if t["status"] == "pending" and t["id"] not in ordered_ids]
+
+    queue_data["queue"] = non_pending + reordered
+    save_json(queue_path, queue_data)
+    return jsonify({"success": True})
+
+
+@app.route("/api/task/bench", methods=["POST"])
+def api_task_bench():
+    """Move a task to benched status — won't be picked up by daemon."""
+    task_id = request.json.get("task_id")
+    queue_path = DATA_DIR / "task_queue.json"
+    queue_data = load_json(queue_path)
+    for t in queue_data.get("queue", []):
+        if t["id"] == task_id:
+            t["status"] = "benched"
+            break
+    save_json(queue_path, queue_data)
+    return jsonify({"success": True})
+
+
+@app.route("/api/task/unbench", methods=["POST"])
+def api_task_unbench():
+    """Move a benched task back to pending."""
+    task_id = request.json.get("task_id")
+    queue_path = DATA_DIR / "task_queue.json"
+    queue_data = load_json(queue_path)
+    for t in queue_data.get("queue", []):
+        if t["id"] == task_id:
+            t["status"] = "pending"
+            break
+    save_json(queue_path, queue_data)
+    return jsonify({"success": True})
+
+
+@app.route("/api/task/keep", methods=["POST"])
+def api_task_keep():
+    """Save a task output to approved_outputs.json for future use as example."""
+    task_id = request.json.get("task_id")
+    task_text = request.json.get("task")
+    output = request.json.get("output")
+    project = request.json.get("project", "")
+    if not task_id or not output:
+        return jsonify({"success": False, "error": "Missing task_id or output"})
+    approved_path = DATA_DIR / "approved_outputs.json"
+    approved = load_json(approved_path) if approved_path.exists() else {"outputs": []}
+    # Don't duplicate
+    existing_ids = [o["task_id"] for o in approved.get("outputs", [])]
+    if task_id not in existing_ids:
+        approved.setdefault("outputs", []).append({
+            "task_id": task_id,
+            "task": task_text,
+            "output": output,
+            "project": project,
+            "approved_at": now_iso()
+        })
+        save_json(approved_path, approved)
+    return jsonify({"success": True})
+
+
+@app.route("/api/task/delete", methods=["POST"])
+def api_task_delete():
+    """Remove a task output from the worklog."""
+    task_id = request.json.get("task_id")
+    if not task_id:
+        return jsonify({"success": False, "error": "Missing task_id"})
+    try:
+        repo_path = Path(config["collective_repo_path"]).expanduser()
+        worklog = repo_path / "STATE" / "worklog.md"
+        if worklog.exists():
+            content_wl = worklog.read_text()
+            # Remove the block for this task_id
+            import re
+            blocks = re.split(r"\n---\n", content_wl)
+            kept = [b for b in blocks if task_id not in b]
+            safe_write(worklog, "\n---\n".join(kept), mode="write", agent="api.task_delete")
+        # Also mark task as deleted in queue
+        queue_path = DATA_DIR / "task_queue.json"
+        queue_data = load_json(queue_path)
+        queue_data["queue"] = [t for t in queue_data.get("queue", []) if t["id"] != task_id]
+        save_json(queue_path, queue_data)
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+
+@app.route("/api/worklog")
+def api_worklog():
+    """Return recent worklog entries from the repo."""
+    try:
+        repo_path = Path(config["collective_repo_path"]).expanduser()
+        worklog = repo_path / "STATE" / "worklog.md"
+        if worklog.exists():
+            lines = worklog.read_text().split("\n")
+            # Return last 100 lines
+            return jsonify({"success": True, "content": "\n".join(lines[-100:])})
+        return jsonify({"success": True, "content": "No worklog yet."})
+    except Exception as e:
+        return jsonify({"success": False, "content": str(e)})
 
 
 @app.route("/api/briefings")
@@ -390,6 +564,45 @@ def api_daemon_status():
         "daily_cap": config["daemon"]["daily_task_cap"]
     })
 
+
+
+# ── OS Mode — Proposals ────────────────────────────────────────────────────────
+
+@app.route("/api/proposals")
+def api_get_proposals():
+    from proposer import load_proposals
+    data = load_proposals()
+    pending = [p for p in data.get("proposals", []) if p.get("status") == "pending"]
+    return jsonify({"success": True, "proposals": pending})
+
+
+@app.route("/api/proposals/approve", methods=["POST"])
+def api_approve_proposal():
+    proposal_id = request.json.get("proposal_id")
+    task = approve_proposal(proposal_id, config)
+    if not task:
+        return jsonify({"success": False, "message": "Proposal not found"})
+    socketio.emit("task_added", task)
+    return jsonify({"success": True, "task": task})
+
+
+@app.route("/api/proposals/dismiss", methods=["POST"])
+def api_dismiss_proposal():
+    proposal_id = request.json.get("proposal_id")
+    ok = dismiss_proposal(proposal_id)
+    return jsonify({"success": ok})
+
+
+@app.route("/api/proposals/run", methods=["POST"])
+def api_run_proposer():
+    try:
+        added = run_proposer(config, socketio)
+        from proposer import load_proposals
+        data = load_proposals()
+        pending = [p for p in data.get("proposals", []) if p.get("status") == "pending"]
+        return jsonify({"success": True, "added": added, "proposals": pending})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
 
 # ── SocketIO Events ────────────────────────────────────────────────────────────
 

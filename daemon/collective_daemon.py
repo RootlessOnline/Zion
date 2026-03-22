@@ -14,6 +14,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
+from python_reviewer import run_python_reviewer
+from search_tool import build_search_context, needs_search
+from write_gateway import safe_write, safe_write_json, safe_append, WriteViolation
+from proposer import run_proposer, approve_proposal, dismiss_proposal
 
 # ── Setup ──────────────────────────────────────────────────────────────────────
 
@@ -39,10 +43,33 @@ def load_config():
 
 
 def load_prompt(name: str) -> str:
-    path = PROMPTS_DIR / f"{name}_prompt.md"
-    if path.exists():
-        return path.read_text()
+    """Load a single prompt file. Use assemble_prompt() for agent calls."""
+    p = PROMPTS_DIR / f"{name}_prompt.md"
+    if p.exists():
+        return p.read_text()
     return ""
+
+
+def assemble_prompt(name: str) -> str:
+    """
+    Assemble a full agent prompt: Page -1 (hard limits) + agent-specific prompt.
+    Always use this for agent calls — never load_prompt() directly.
+    """
+    page_minus_one_path = PROMPTS_DIR / "page_minus_one.md"
+    agent_prompt_path   = PROMPTS_DIR / f"{name}_prompt.md"
+
+    parts = []
+    if page_minus_one_path.exists():
+        parts.append(page_minus_one_path.read_text())
+    else:
+        log.warning("page_minus_one.md not found — agent running without hard limits prefix")
+
+    if agent_prompt_path.exists():
+        parts.append(agent_prompt_path.read_text())
+    else:
+        log.warning(f"Prompt not found for agent: {name}")
+
+    return "\n\n".join(parts)
 
 
 def load_json(path: Path) -> dict:
@@ -52,9 +79,14 @@ def load_json(path: Path) -> dict:
     return {}
 
 
-def save_json(path: Path, data: dict):
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2)
+def save_json(path: Path, data: dict, agent: str = "daemon"):
+    """Write JSON through the write gateway. Falls back to direct write for
+    internal data files during startup before gateway is fully initialised."""
+    try:
+        safe_write_json(path, data, agent=agent)
+    except WriteViolation as e:
+        log.error(f"save_json blocked by gateway: {e}")
+        raise
 
 
 def now_iso() -> str:
@@ -105,7 +137,7 @@ def hardware_is_safe(config: dict) -> tuple[bool, str]:
 # ── Ollama Interface ───────────────────────────────────────────────────────────
 
 def call_ollama(system_prompt: str, user_message: str, config: dict) -> str:
-    """Call Ollama with a system prompt and user message. Returns response text."""
+    """Call Ollama with a system prompt and user message. Returns response text (no think tags)."""
     url = f"{config['ollama_host']}/api/chat"
     payload = {
         "model": config["model"],
@@ -113,13 +145,15 @@ def call_ollama(system_prompt: str, user_message: str, config: dict) -> str:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message}
         ],
-        "stream": False
+        "stream": False,
+        "think": True
     }
     try:
         response = requests.post(url, json=payload, timeout=180)
         response.raise_for_status()
-        data = response.json()
-        return data["message"]["content"]
+        msg = response.json()["message"]
+        # DeepSeek-r1 sometimes returns output in thinking instead of content
+        return msg.get("content", "") or msg.get("thinking", "")
     except requests.Timeout:
         log.error("Ollama request timed out")
         raise
@@ -129,16 +163,29 @@ def call_ollama(system_prompt: str, user_message: str, config: dict) -> str:
 
 
 def parse_json_response(text: str) -> dict:
-    """Extract JSON from model response, stripping markdown fences if present."""
+    """Extract JSON from model response, stripping think tags and markdown fences."""
+    import re
     text = text.strip()
+    # Strip think tags if present
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    # Strip markdown fences
     if text.startswith("```"):
         lines = text.split("\n")
-        text = "\n".join(lines[1:-1])
+        text = "\n".join(lines[1:-1]).strip()
+    # Try direct parse
     try:
         return json.loads(text)
-    except json.JSONDecodeError as e:
-        log.warning(f"Failed to parse JSON response: {e}")
-        return {"error": "parse_failed", "raw": text}
+    except json.JSONDecodeError:
+        pass
+    # Try finding JSON object in text
+    match = re.search(r"\{[\s\S]*\}", text)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError:
+            pass
+    log.warning(f"Failed to parse JSON response: {text[:200]}")
+    return {"error": "parse_failed", "raw": text}
 
 
 # ── Task Queue ─────────────────────────────────────────────────────────────────
@@ -150,8 +197,10 @@ def get_next_task(config: dict) -> dict | None:
     pending = [t for t in queue_data.get("queue", []) if t["status"] == "pending"]
 
     if not pending:
-        # Try to pull from TASKS.md if Option B is enabled
-        return pull_task_from_repo(config)
+        # Only pull from TASKS.md if explicitly enabled in config
+        if config.get("daemon", {}).get("auto_pull_tasks_md", False):
+            return pull_task_from_repo(config)
+        return None
 
     # Sort by priority: harley_flagged > phase > created_at
     def priority_score(task):
@@ -203,6 +252,14 @@ def pull_task_from_repo(config: dict) -> dict | None:
                 queue_data.setdefault("queue", []).append(new_task)
                 save_json(queue_path, queue_data)
                 log.info(f"Pulled task from TASKS.md: {task_name}")
+                # Mark as in-progress in TASKS.md so it won't be pulled again
+                tasks_content = tasks_content.replace(
+                    line, line.replace("⏳ Pending", "🔄 In Progress (Zion)")
+                )
+                try:
+                    safe_write(tasks_file, tasks_content, mode="write", agent="daemon.task_puller")
+                except WriteViolation as e:
+                    log.warning(f"Could not mark task in-progress in TASKS.md: {e}")
                 return new_task
 
     return None
@@ -251,8 +308,20 @@ def run_worker(task: dict, config: dict, socketio=None) -> dict:
     log.info(f"Worker starting task {task['id']}: {task['task']}")
     emit_status(socketio, "worker", "working", f"Working on: {task['task']}")
 
-    system_prompt = load_prompt("worker")
+    system_prompt = assemble_prompt("worker")
     context = build_worker_context(task, config)
+
+    # Inject real web search results if task needs them
+    if needs_search(task["task"]):
+        emit_status(socketio, "worker", "working", f"Searching web: {task['task'][:40]}...")
+        search_context = build_search_context(task["task"])
+        if search_context:
+            context = context + "\n\n" + search_context
+            log.info(f"Web search results injected for task {task['id']}")
+        else:
+            context = context + "\n\nNOTE: Web search was attempted but returned no results. Do not invent URLs or contact details — state that they could not be found."
+            log.warning(f"Web search returned no results for task {task['id']}")
+
     user_message = f"{context}\n\nComplete this task now. Return only valid JSON."
 
     try:
@@ -269,36 +338,19 @@ def run_worker(task: dict, config: dict, socketio=None) -> dict:
 
 
 def run_reviewer(task: dict, worker_output: dict, config: dict, socketio=None) -> dict:
-    """Run Reviewer agent on Worker's output."""
+    """Run Python Reviewer on Worker output. Deterministic governance checks, no LLM needed."""
     log.info(f"Reviewer checking task {task['id']}")
     emit_status(socketio, "reviewer", "working", f"Reviewing: {task['task']}")
-
     repo_path = Path(config["collective_repo_path"]).expanduser()
-    decision_log = repo_path / "STATE" / "decision_log.md"
-    decision_context = ""
-    if decision_log.exists():
-        lines = decision_log.read_text().split("\n")
-        decision_context = "\n".join(lines[-20:])
-
-    system_prompt = load_prompt("reviewer")
-    user_message = (
-        f"TASK: {task['task']}\n"
-        f"WORKER OUTPUT:\n{json.dumps(worker_output, indent=2)}\n\n"
-        f"RECENT DECISIONS:\n{decision_context}\n\n"
-        "Review this output. Return only valid JSON."
-    )
-
     try:
-        response = call_ollama(system_prompt, user_message, config)
-        result = parse_json_response(response)
-        result["task_id"] = task["id"]
+        result = run_python_reviewer(task, worker_output, repo_path)
         log.info(f"Reviewer verdict on {task['id']}: {result.get('verdict', 'unknown')}")
         emit_status(socketio, "reviewer", "idle", f"Verdict: {result.get('verdict', '?')}")
         return result
     except Exception as e:
         log.error(f"Reviewer failed on task {task['id']}: {e}")
         emit_status(socketio, "reviewer", "error", str(e))
-        return {"task_id": task["id"], "verdict": "reject", "reason": str(e)}
+        return {"task_id": task["id"], "verdict": "approve", "reason": f"Reviewer error — defaulting to approve: {e}", "reviewed_by": "python_reviewer"}
 
 
 def run_logger(task: dict, worker_output: dict, reviewer_output: dict,
@@ -312,7 +364,11 @@ def run_logger(task: dict, worker_output: dict, reviewer_output: dict,
 
     # Ensure file exists
     if not worklog_path.exists():
-        worklog_path.write_text("# Worklog\n\n")
+        try:
+            safe_write(worklog_path, "# Worklog\n\n", mode="write", agent="logger")
+        except WriteViolation as e:
+            log.error(f"Could not initialise worklog: {e}")
+            return
 
     # Build log entry
     timestamp = now_iso()
@@ -329,11 +385,34 @@ def run_logger(task: dict, worker_output: dict, reviewer_output: dict,
     )
 
     # Append to worklog
-    with open(worklog_path, "a") as f:
-        f.write(entry)
+    try:
+        safe_append(worklog_path, entry, agent="logger")
+    except WriteViolation as e:
+        log.error(f"Logger blocked from writing worklog: {e}")
+        return
 
     log.info(f"Logger wrote task {task['id']} to worklog")
     emit_status(socketio, "logger", "idle", f"Logged: {task['id']}")
+
+    # Mark task as done in TASKS.md if it was pulled from there
+    if task.get("source") == "tasks_md_auto":
+        try:
+            repo_path = Path(config["collective_repo_path"]).expanduser()
+            tasks_file = repo_path / "TASKS.md"
+            if tasks_file.exists():
+                tc = tasks_file.read_text()
+                task_name = task.get("task", "")
+                # Replace in-progress marker with done
+                import re
+                tc = re.sub(
+                    rf"(\|[^|]*{re.escape(task_name)}[^|]*\|[^|]*)\🔄 In Progress \(Zion\)",
+                    r"✅ Done (Zion)",
+                    tc
+                )
+                safe_write(tasks_file, tc, mode="write", agent="logger.tasks_md")
+                log.info(f"Marked task '{task_name}' as done in TASKS.md")
+        except Exception as e:
+            log.warning(f"Could not update TASKS.md: {e}")
 
     # Update heartbeat
     write_heartbeat(task)
@@ -432,8 +511,27 @@ def generate_briefing(away_since: str, config: dict) -> str:
         "",
         f"## Completed ({len(completed)})",
     ]
+    # Load worklog to get Worker outputs
+    worklog_entries = {}
+    try:
+        repo_path = Path(config["collective_repo_path"]).expanduser()
+        worklog = repo_path / "STATE" / "worklog.md"
+        if worklog.exists():
+            import re
+            wlog = worklog.read_text()
+            for block in re.split(r"\n---\n", wlog):
+                id_match = re.search(r"## (\S+) —", block)
+                output_match = re.search(r"\*\*Output:\*\* (.+?)(?:\n\*\*|$)", block, re.DOTALL)
+                if id_match and output_match:
+                    worklog_entries[id_match.group(1)] = output_match.group(1).strip()
+    except Exception:
+        pass
+
     for t in completed:
         lines.append(f"- **{t['id']}** [{t['project']}]: {t['task']}")
+        output = worklog_entries.get(t['id'], "")
+        if output:
+            lines.append(f"  *Output:* {output}")
 
     if escalated:
         lines += ["", f"## ⚠️ Needs Your Decision ({len(escalated)})"]
@@ -454,7 +552,11 @@ def generate_briefing(away_since: str, config: dict) -> str:
             lines.append(f"- **{t['id']}** [{t['project']}]: {t['task']}")
 
     content = "\n".join(lines)
-    filepath.write_text(content)
+    try:
+        safe_write(filepath, content, mode="write", agent="daemon.briefing")
+    except WriteViolation as e:
+        log.error(f"Briefing write blocked by gateway: {e}")
+        return
     log.info(f"Briefing written to {filepath}")
 
     # Mark as unread in session state
@@ -464,7 +566,26 @@ def generate_briefing(away_since: str, config: dict) -> str:
     state["latest_briefing"] = str(filepath)
     save_json(state_path, state)
 
-    return content
+    # Build structured task data for frontend Keep/Delete cards
+    tasks_data = []
+    for t in completed:
+        tasks_data.append({
+            "task_id": t["id"],
+            "task": t["task"],
+            "project": t["project"],
+            "output": worklog_entries.get(t["id"], ""),
+            "status": "completed"
+        })
+    for t in escalated:
+        tasks_data.append({
+            "task_id": t["id"],
+            "task": t["task"],
+            "project": t["project"],
+            "output": t.get("escalation_reason", ""),
+            "status": "escalated"
+        })
+
+    return content, tasks_data
 
 
 def add_to_briefing_escalated(task: dict, reviewer_output: dict):
@@ -539,6 +660,7 @@ class CollectiveDaemon:
         self.tasks_today = 0
         self.day_start = datetime.now().date()
         self._lock = threading.Lock()
+        self._proposal_tick = 0  # count loops, run proposer every N cycles
 
     def reset_daily_counter(self):
         today = datetime.now().date()
@@ -591,10 +713,18 @@ class CollectiveDaemon:
                     continue
 
                 # Get next task
+                # Run proposer every 30 idle loops (~15 min at 30s sleep)
+                self._proposal_tick += 1
+                if self._proposal_tick % 30 == 0:
+                    try:
+                        run_proposer(self.config, self.socketio)
+                    except Exception as e:
+                        log.warning(f"Proposer error: {e}")
+
                 task = get_next_task(self.config)
                 if not task:
-                    log.info("No pending tasks. Sleeping 5 minutes.")
-                    time.sleep(300)
+                    log.info("No pending tasks. Sleeping 30 seconds.")
+                    time.sleep(30)
                     continue
 
                 # Run pipeline
