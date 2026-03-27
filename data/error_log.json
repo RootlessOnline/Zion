@@ -1,0 +1,108 @@
+{
+  "errors": [
+    {
+      "timestamp": "2026-03-13T18:43:07.013796+00:00",
+      "task_id": "T1773427143",
+      "task": "show me 5 places in rotterdam where I can start a veggie or food garden. renting is also possible, but free is prioratised",
+      "error": "HTTPConnectionPool(host='localhost', port=11434): Read timed out. (read timeout=180)"
+    },
+    {
+      "timestamp": "2026-03-13T19:17:28.537232+00:00",
+      "type": "write_violation",
+      "agent": "test",
+      "reason": "Path not in allowlist: no matching rule in allowed_write_paths",
+      "attempted_path": "/home/quix/Zion/governance/permissions.json"
+    },
+    {
+      "timestamp": "2026-03-13T19:17:28.537419+00:00",
+      "type": "write_violation",
+      "agent": "test",
+      "reason": "Extension '.py' not in allowed list {'.json', '.log', '.txt', '.md'}",
+      "attempted_path": "/home/quix/Zion/daemon/evil.py"
+    },
+    {
+      "timestamp": "2026-03-13T19:17:28.544698+00:00",
+      "type": "write_violation",
+      "agent": "test",
+      "reason": "Extension '.py' not in allowed list {'.json', '.log', '.txt', '.md'}",
+      "attempted_path": "/home/quix/Zion/data/_gateway_test/malicious.py"
+    },
+    {
+      "timestamp": "2026-03-13T19:17:28.545027+00:00",
+      "type": "write_violation",
+      "agent": "test",
+      "reason": "Content size 103424 bytes exceeds 102400 byte limit",
+      "attempted_path": "/home/quix/Zion/data/_gateway_test/big.md"
+    },
+    {
+      "timestamp": "2026-03-13T19:17:28.545332+00:00",
+      "type": "write_violation",
+      "agent": "test",
+      "reason": "'worklog.md' is append-only \u2014 use mode='append'",
+      "attempted_path": "/home/quix/Zion/data/_gateway_test/worklog.md"
+    },
+    {
+      "timestamp": "2026-03-13T19:17:28.545897+00:00",
+      "type": "write_violation",
+      "agent": "test",
+      "reason": "Path not in allowlist: no matching rule in allowed_write_paths",
+      "attempted_path": "/home/quix/Zion/governance/permissions.json"
+    },
+    {
+      "timestamp": "2026-03-13T20:36:17.132588+00:00",
+      "type": "write_violation",
+      "agent": "daemon",
+      "reason": "'watcher_log.json' is append-only \u2014 use mode='append'",
+      "attempted_path": "/home/quix/Zion/data/watcher_log.json"
+    },
+    {
+      "timestamp": "2026-03-15T10:33:31.807338+00:00",
+      "type": "write_violation",
+      "agent": "test",
+      "reason": "Path not in allowlist: no matching rule in allowed_write_paths",
+      "attempted_path": "/home/quix/Zion/governance/permissions.json"
+    },
+    {
+      "timestamp": "2026-03-15T10:33:31.807580+00:00",
+      "type": "write_violation",
+      "agent": "test",
+      "reason": "Extension '.py' not in allowed list {'.json', '.log', '.md', '.txt'}",
+      "attempted_path": "/home/quix/Zion/daemon/evil.py"
+    },
+    {
+      "timestamp": "2026-03-15T10:33:31.807797+00:00",
+      "type": "write_violation",
+      "agent": "test",
+      "reason": "Extension '.py' not in allowed list {'.json', '.log', '.md', '.txt'}",
+      "attempted_path": "/home/quix/Zion/data/_gateway_test/malicious.py"
+    },
+    {
+      "timestamp": "2026-03-15T10:33:31.808072+00:00",
+      "type": "write_violation",
+      "agent": "test",
+      "reason": "Content size 103424 bytes exceeds 102400 byte limit",
+      "attempted_path": "/home/quix/Zion/data/_gateway_test/big.md"
+    },
+    {
+      "timestamp": "2026-03-15T10:33:31.808320+00:00",
+      "type": "write_violation",
+      "agent": "test",
+      "reason": "'worklog.md' is append-only \u2014 use mode='append'",
+      "attempted_path": "/home/quix/Zion/data/_gateway_test/worklog.md"
+    },
+    {
+      "timestamp": "2026-03-15T10:33:31.808804+00:00",
+      "type": "write_violation",
+      "agent": "test",
+      "reason": "Path not in allowlist: no matching rule in allowed_write_paths",
+      "attempted_path": "/home/quix/Zion/governance/permissions.json"
+    },
+    {
+      "timestamp": "2026-03-15T10:36:49.589073+00:00",
+      "type": "write_violation",
+      "agent": "daemon",
+      "reason": "'watcher_log.json' is append-only \u2014 use mode='append'",
+      "attempted_path": "/home/quix/Zion/data/watcher_log.json"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "outputs": [
+    {
+      "task_id": "T1773414773",
+      "task": "list 5 vegetables that grow well in the Netherlands in spring, with days to harvest for each",
+      "output": "Vegetables that grow well in the Netherlands in spring include: Peas (harvested in 60-70 days), Radishes (harvested in 20-30 days), Lettuce (harvested in 50-70 days), Spinach (harvested in 40-60 days), and Carrots (harvested in 70-80 days). These estimates are based on typical growing conditions in the Netherlands, which benefit from a temperate climate and advanced agricultural practices, but actual times may vary with specific varieties and weather.",
+      "project": "garden_business",
+      "approved_at": "2026-03-13T15:17:28.636135+00:00"
+    }
+  ]
+}

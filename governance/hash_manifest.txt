@@ -1,5 +1,5 @@
 # Zion Governance Hash Manifest
-# Generated: 2026-03-15T13:16:56.500458+00:00
+# Generated: 2026-03-27T10:08:02.042509+00:00
 # Files: 9
 # Do not edit manually. Run: python governance/validator.py --rehash
 
